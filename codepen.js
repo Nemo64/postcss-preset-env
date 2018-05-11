@@ -1,104 +1,146 @@
-// tooling
 const browserslist = require('browserslist');
 const postcss = require('postcss');
 const plugin = require('..');
 
-// fragment
-const $fragment = document.createDocumentFragment();
+// prepare a cache for the <style> element and cached <style> text
+let $style, currentCSS;
 
-// stage control
-const $stage = $fragment.appendChild(document.createElement('select')); $stage.setAttribute('aria-label', 'stage'); $stage.className = 'option-stage';
+// prepare the reference to the <pre> result element
+let $result;
 
-[0, 1, 2, 3, 4, 5].forEach(stage => {
-	const $option = $stage.appendChild(document.createElement('option')); $option.value = stage;
+// prepare the targetted codepen class name
+const codepenClass = 'cp-pen-styles';
 
-	$option.appendChild(document.createTextNode(`Stage ${stage}`));
-}); $stage.value = 1;
+// prepare the process options
+const processOptions = {
+	from: codepenClass,
+	stringifier: postcssHTMLStringifier
+};
 
-$stage.addEventListener('change', updateStyle);
+// prepare the plugin options with defaults
+const pluginOptions = {
+	browsers: '> 5%',
+	stage: 0
+};
 
-// browsers control
-const $browsers = $fragment.appendChild(document.createElement('input')); $browsers.setAttribute('aria-label', 'browser query'); $browsers.className = 'option-browsers'; $browsers.value = 'last 2 chrome versions, last 2 edge versions, last 2 firefox versions, last 2 safari versions, last 3 ios versions, last 2 android versions';
+// transform <style> source with a plugin
+function transformStyleElement () {
+	if ($style) {
+		// prepare the <style> source
+		const source = $style.textContent.trim();
+		currentCSS = currentCSS || source;
 
-$browsers.addEventListener('input', () => {
-	try {
-		browserslist($browsers.value);
+		// transform the source
+		postcss([ plugin(pluginOptions) ]).process(source, processOptions)
+		// replace the <style> source with the transformed result
+		.then(
+			result => {
+				const resultCSS = result.css;
 
-		updateStyle();
-	} catch (error) {
-		/* do nothing */
-	}
-});
-
-// result preformatted container
-const $result = $fragment.appendChild(document.createElement('pre')); $result.className = 'css-root';
-
-// cache
-const cache = {};
-
-// parse <style> after running its contents through a PostCSS plugin
-function updateStyle($style) {
-	if ($style instanceof Element) {
-		cache.textContent = $style.textContent;
-		cache.className = $style.className;
-	}
-
-	return postcss([
-		plugin({
-			browsers: $browsers.value,
-			stage: $stage.value,
-			features: {
-				'css-color-modifying-colors': {
-					unresolved: 'ignore'
+				if (currentCSS !== resultCSS) {
+					$result.innerHTML = currentCSS = resultCSS;
 				}
+			},
+			// otherwise, use a fallback and log the error
+			error => {
+				console.error(error);
 			}
-		})
-	]).process(cache.textContent, {
-		from: cache.className
-	}).then(
-		result => postcss().process(result.css.trim(), {
-			from: cache.className,
-			stringifier: postcssToSyntaxHTML
-		})
-	).then(
-		result => {
-			if ($style instanceof Element && $style.parentNode) {
+		)
+		// remove <style class={codepenClass}> or <style> from the document
+		.then(() => {
+			if ($style.parentNode) {
 				$style.parentNode.removeChild($style);
 			}
-
-			if (result.css !== cache.css) {
-				$result.innerHTML = cache.css = result.css;
-			}
-		},
-		console.error
-	);
+		});
+	}
 }
 
-// update any pre-existing <style> in <head> using the PostCSS plugin
-const $styles = document.head.getElementsByTagName('style');
+// initialize the dom
+function initDOM () {
+	// prepare the fragment used to create all of the dom
+	const $fragment = document.createDocumentFragment();
 
-if ($styles.length) {
-	[].filter.call($styles, node => node.nodeName === 'STYLE' && node.className === 'cp-pen-styles').concat($styles[0]).slice(0, 1).forEach(updateStyle);
-}
+	// prepare the "stage" option control
+	const $stage = $fragment.appendChild(document.createElement('select'));
 
-// watch for and update any new <style> in <head> using the PostCSS plugin
-(
-	new MutationObserver(
-		mutations => mutations.forEach(
-			mutation => [].filter.call(mutation.addedNodes || [], node => node.nodeName === 'STYLE' && node.className === 'cp-pen-styles').forEach(updateStyle)
-		)
-	)
-).observe(document.head, {
-	childList: true
-});
+	$stage.setAttribute('aria-label', 'stage');
 
-// on document ready
-document.addEventListener('DOMContentLoaded', () => {
+	$stage.className = 'option-stage';
+
+	[0, 1, 2, 3, 4].forEach(stage => {
+		const $option = $stage.appendChild(document.createElement('option'));
+
+		$option.value = stage;
+
+		$option.appendChild(document.createTextNode(`Stage ${stage}`));
+	});
+
+	$stage.value = pluginOptions.stage;
+
+	$stage.addEventListener('change', () => {
+		pluginOptions.stage = Number($stage.value) || 0;
+
+		transformStyleElement();
+	});
+
+	// prepare the "browsers" option control
+	const $browsers = $fragment.appendChild(document.createElement('input'));
+
+	$browsers.setAttribute('aria-label', 'browser query');
+
+	$browsers.className = 'option-browsers';
+
+	$browsers.value = pluginOptions.browsers;
+
+	$browsers.addEventListener('input', () => {
+		// transform CodePen styles when the browserslist validates
+		try {
+			browserslist($browsers.value);
+
+			pluginOptions.browsers = $browsers.value;
+
+			transformStyleElement();
+		} catch (error) {
+			// or do nothing
+		}
+	});
+
+	// prepare the <pre> result element
+	$result = $fragment.appendChild(document.createElement('pre'));
+
+	$result.className = 'css-root';
+
+	// add the fragment to the <body>
 	document.body.appendChild($fragment);
-});
 
-// format css as syntax-highlighted HTML
-function postcssToSyntaxHTML(root, builder) {
+	// prepare all <style> elements in the <head>
+	const $styles = document.head.getElementsByTagName('style');
+
+	// prepare the first <style class={codepenClass}> or <style> in <head>
+	$style = Array.prototype.filter.call($styles, $currentStyle => $currentStyle.className === codepenClass)
+	.concat($styles[0])[0] || $style;
+
+	// transform the source
+	if (typeof transformStyleElement === 'function') {
+		transformStyleElement();
+	}
+
+	// watch for and transform any new <style class={codepenClass}> in <head>
+	(
+		new MutationObserver(
+			mutations => mutations.forEach(
+				mutation => {
+					$style = [].filter.call(mutation.addedNodes || [], $currentStyle => $currentStyle.nodeName === 'STYLE' && $currentStyle.className === codepenClass)[0] || $style;
+
+					transformStyleElement();
+				}
+			)
+		)
+	).observe(document.head, { childList: true });
+}
+
+// stringify CSS as syntax-highlighted HTML
+function postcssHTMLStringifier (root, builder) {
 	function toString(node, semicolon) {
 		if ('atrule' === node.type) {
 			return atruleToString(node, semicolon);
@@ -133,3 +175,6 @@ function postcssToSyntaxHTML(root, builder) {
 		toString(root)
 	);
 }
+
+// on document ready, initialize the dom
+document.addEventListener('DOMContentLoaded', initDOM);
